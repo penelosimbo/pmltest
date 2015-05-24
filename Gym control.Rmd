@@ -1,0 +1,163 @@
+---
+title: "Gym excercises control"
+author: "Alexey N"
+date: "May 24, 2015"
+output: html_document
+---
+
+```{r init, echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(caret)
+set.seed(201)
+```
+
+```{r aux, include=FALSE}
+na.columns <- function(data = data.frame(), thresh = .95){
+# Seeking indices of columns in data where NAs share is equal or higher than thresh
+    NAcols <- apply(data, 2, function(x) (sum(is.na(x))/nrow(data) >= thresh))
+    colInd <- 1:length(NAcols)
+    colInd[NAcols]
+}
+
+# Seeking indices of variables highly correlated with others
+high.cor <- function(data = data.frame(), thresh = .8){
+    dataCor <- cor(data[, -dim(data)[2]])
+    diag(dataCor) <- 0
+    dataCor1 <- dataCor > thresh
+    which(apply(dataCor1 & upper.tri(dataCor1), 2, sum) > 0, arr.ind = TRUE)
+}
+```
+## Summary
+
+In this paper we tested a machine learning algorithm to predict the type of gym
+exercises using data obtained from several accelerometers attached to the 
+different parts of the body of people doing such exercises.
+
+In this particular case Random forest algorithm was used. It showed very good 
+accuracy both on training and testing datasets, though is took much time 
+to build a model.
+
+## Analysis
+
+First of all, we download both training 
+and testing sets from Coursera data storage and then read them. Here testing 
+set used to create files for submitting to Coursera is read to `pmlFinTest` 
+variable, and training dataset is loaded to `pmlTraining`.
+
+```{r loaddata, cache=TRUE}
+if(!file.exists("pml-training.csv"))
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+                  "pml-training.csv", method = "curl")
+
+pmlTraining <- read.csv("pml-training.csv", na.strings = c("", "NA"), 
+                  comment.char = "#")
+
+if(!file.exists("pml-testing.csv"))
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                  "pml-testing.csv", method = "curl")
+
+pmlFinTest <- read.csv("pml-testing.csv", na.strings = c("", "NA"), 
+                  comment.char = "#")
+```
+
+Then we divide the training dataset to two partitions: `pmlTr` for training and
+`pmlTs` — for testing. It doesn't make sense to create a dataset for validation
+because the initial dataset isn't that big. Accelerometers used in the 
+experiment work at 45 Hz, creating almost half a hundred rows of data every 
+second, and having only 20,000 rows in the training dataset we may overslice
+data (since in fact one observation in the experiment is described by hundreds
+of rows). This may potentially lead to overfitting.
+
+So we take just 70% of the initial training dataset for training and other 30%
+— for testing.
+
+```{r partitioning, echo=TRUE}
+pmlInd <- createDataPartition(y = pmlTraining$classe, p = .7, list = FALSE)
+pmlTr <- pmlTraining[pmlInd, ]
+pmlTs <- pmlTraining[-pmlInd, ]
+```
+
+#### Preprocessing
+We need to exclude some of variables from modelling process, since some of them
+carry little or no information at all, and others may only increase bias and 
+variance, carrying only noise. The variable reduction arguably increases the 
+speed of training.
+
+First of all, we remove columns with more than 95% NAs. Such variables doesn't 
+help to build prediction model since they are nearly constant.
+
+```{r preproc1, echo=TRUE}
+nc <- na.columns(pmlTr, .95)
+pmlTr <- pmlTr[, -nc]
+pmlTs <- pmlTs[, -nc]
+pmlFinTest <- pmlFinTest[, -nc]
+```
+
+Then we remove columns with the nearly zero variability using R function 
+`nearZeroVar` for the same reason as above.
+```{r preproc2, echo=TRUE}
+nzv <- nearZeroVar(pmlTr)
+pmlTr <- pmlTr[, -nzv]
+pmlTs <- pmlTs[, -nzv]
+pmlFinTest <- pmlFinTest[, -nzv]
+```
+
+Then we remove athletes' names and timestamps as they don't seem to be valid 
+predictors: running the model based on such variables on testing data
+obtained in some time later and/or with the help of other athletes will result
+in reduced accuracy.
+
+```{r preproc3, echo=TRUE}
+pmlTr <- pmlTr[, -(1:5)]
+pmlTs <- pmlTs[, -(1:5)]
+pmlFinTest <- pmlFinTest[, -(1:5)]
+```
+
+Finally, we cut off the variables strongly correlated with others. It is not 
+necessary for building models based on trees, but it may increase the speed
+of training.
+
+```{r preproc4, echo=TRUE}
+hc <- high.cor(pmlTr)
+pmlTr <- pmlTr[, -hc]
+pmlTs <- pmlTs[, -hc]
+pmlFinTest <- pmlFinTest[, -hc]
+```
+
+#### Modelling and testing
+
+We use there the well-known Random Forest algorhitm. It's
+one of the most reliable and accurate for classifications problem, though it is
+a bit time consuming. Random Forest is pretty accurate, though it tends 
+to overfitting. Moreover, `train` function guarantees cross-validation, and
+it provides self-tuning during buildind the model.
+
+```{r modelling, echo=TRUE, cache=TRUE}
+modFitRF <- train(classe ~ ., data = pmlTr, method = "rf")
+modFitRF
+```
+
+As could be seen from above, the model provides pretty good both accuracy and 
+kappa coefficient. It is known that Random Forest may overfit data, so the 
+accuracy on a testing dataset may be slightly lower.
+
+Let's give it a try.
+
+```{r testing, echo=FALSE}
+pmlPred <- predict(modFitRF, newdata = pmlTs)
+confusionMatrix(pmlPred, pmlTs$classe)
+```
+
+In fact, accuracy and kappa in this case are ever higher than on training 
+dataset, and only a few cases of several thousands cases were misclassified. 
+But there's no guarantee that this phenomenon will hold while
+runnung the model on other independent test datasets.
+
+## Appendix
+
+There are two custom functions used for data preprocessing. The `na.columns` 
+function returns indices of columns in the dataset where share of NAs if higher
+or equal to certain threshold. The `high.cor` function returns indices of 
+columns (variables) highly correlated with one or more other variables.
+```{r ref.label="aux"}
+```
