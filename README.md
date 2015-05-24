@@ -1,4 +1,3 @@
 # pmltest
-just training stuff
-Here's the gh-pages version: https://github.com//
-http://penelosimbo.github.io/pmltest/Gym_control.html
+just some training stuff
+Here's the html version of the report: http://penelosimbo.github.io/pmltest/Gym_control.html
